@@ -3,7 +3,6 @@ import time
 import numpy as np
 
 def parse_args():
-    # 解析命令行参数
     instance_file = None
     termination = 60
     seed = 1
@@ -30,7 +29,6 @@ def parse_args():
     return instance_file, termination, seed
 
 def parse_instance(filename):
-    # 解析CARP实例文件
     with open(filename, 'r') as f:
         lines = f.readlines()
     info = {}
@@ -45,7 +43,6 @@ def parse_instance(filename):
             parts = line.strip().split()
             u, v, cost, demand = map(int, parts)
             edges.append({'u': u, 'v': v, 'cost': cost, 'demand': demand})
-    # 基本参数
     V = int(info['VERTICES'])
     depot = int(info['DEPOT'])
     required_edges = [e for e in edges if e['demand'] > 0]
@@ -63,7 +60,6 @@ def parse_instance(filename):
     }
 
 def build_graph(instance):
-    # 构建邻接矩阵
     V = instance['V']
     INF = 1 << 30
     cost = np.full((V+1, V+1), INF, dtype=int)
@@ -73,7 +69,6 @@ def build_graph(instance):
         cost[v][u] = c
     for i in range(1, V+1):
         cost[i][i] = 0
-    # Floyd-Warshall最短路
     for k in range(1, V+1):
         for i in range(1, V+1):
             for j in range(1, V+1):
@@ -82,7 +77,6 @@ def build_graph(instance):
     return cost
 
 def path_scanning(instance, cost, rng):
-    # 基于Path Scanning的启发式初解
     required = set((min(e['u'], e['v']), max(e['u'], e['v'])) for e in instance['required_edges'])
     unserved = required.copy()
     routes = []
@@ -97,16 +91,13 @@ def path_scanning(instance, cost, rng):
             for e in instance['required_edges']:
                 eid = (min(e['u'], e['v']), max(e['u'], e['v']))
                 if eid in unserved and load + e['demand'] <= capacity:
-                    # 选择最近的任务
                     dist = min(cost[curr][e['u']], cost[curr][e['v']])
                     candidates.append((dist, eid, e))
             if not candidates:
                 break
-            # 随机打乱，选择最近的
             rng.shuffle(candidates)
             candidates.sort(key=lambda x: x[0])
             _, eid, e = candidates[0]
-            # 确定服务方向
             if cost[curr][e['u']] <= cost[curr][e['v']]:
                 route.append((e['u'], e['v']))
                 curr = e['v']
@@ -119,7 +110,6 @@ def path_scanning(instance, cost, rng):
     return routes
 
 def calc_total_cost(routes, instance, cost):
-    # 计算总成本
     edge_cost = {}
     for e in instance['edges']:
         edge_cost[(e['u'], e['v'])] = e['cost']
@@ -135,8 +125,22 @@ def calc_total_cost(routes, instance, cost):
         total += cost[curr][depot]
     return total
 
+def calc_route_cost(route, instance, cost):
+    edge_cost = {}
+    for e in instance['edges']:
+        edge_cost[(e['u'], e['v'])] = e['cost']
+        edge_cost[(e['v'], e['u'])] = e['cost']
+    depot = instance['depot']
+    total = 0
+    curr = depot
+    for u, v in route:
+        total += cost[curr][u]
+        total += edge_cost[(u, v)]
+        curr = v
+    total += cost[curr][depot]
+    return total
+
 def format_solution(routes):
-    # 格式化输出
     s = []
     for route in routes:
         s.append('0')
@@ -144,6 +148,55 @@ def format_solution(routes):
             s.append(f'({u},{v})')
         s.append('0')
     return 's ' + ','.join(s)
+
+def best_modify(new_route, ord_route, instance, cost):
+    depot = instance['depot']
+    rev_route = [(v, u) for u, v in ord_route[::-1]]
+    s, t = ord_route[0][0], ord_route[-1][1]
+    min_cost = cost[depot][s] + cost[t][new_route[0][0]] - cost[depot][new_route[0][0]]
+    min_pos = 0
+    min_rev = False
+    if cost[depot][t] + cost[s][new_route[0][0]] - cost[depot][new_route[0][0]] < min_cost:
+        min_cost = cost[depot][t] + cost[s][new_route[0][0]] - cost[depot][new_route[0][0]]
+        min_pos = 0
+        min_rev = True
+    if cost[depot][s] + cost[t][new_route[-1][1]] - cost[depot][new_route[-1][1]] < min_cost:
+        min_cost = cost[depot][s] + cost[t][new_route[-1][1]] - cost[depot][new_route[-1][1]]
+        min_pos = len(new_route)
+        min_rev = True
+    if cost[depot][t] + cost[s][new_route[-1][1]] - cost[depot][new_route[-1][1]] < min_cost:
+        min_cost = cost[depot][t] + cost[s][new_route[-1][1]] - cost[depot][new_route[-1][1]]
+        min_pos = len(new_route)
+        min_rev = False
+    for i in range(1, len(new_route)):
+        if cost[new_route[i-1][1]][s] + cost[new_route[i][0]][t] - cost[new_route[i-1][1]][new_route[i][0]] < min_cost:
+            min_cost = cost[new_route[i-1][1]][s] + cost[new_route[i][0]][t] - cost[new_route[i-1][1]][new_route[i][0]]
+            min_pos = i
+            min_rev = False
+        if cost[new_route[i][0]][s] + cost[new_route[i-1][1]][t] - cost[new_route[i][0]][new_route[i-1][1]] < min_cost:
+            min_cost = cost[new_route[i][0]][s] + cost[new_route[i-1][1]][t] - cost[new_route[i][0]][new_route[i-1][1]]
+            min_pos = i
+            min_rev = True
+    if min_rev:
+        new_route = new_route[:min_pos] + rev_route + new_route[min_pos:]
+    else:
+        new_route = new_route[:min_pos] + ord_route + new_route[min_pos:]
+
+    return new_route, calc_route_cost(new_route, instance, cost)
+
+def modify(routes, ccost, instance, cost, rng):
+    x = rng.integers(len(routes))
+    if len (routes[x]) < 2:
+        return routes, ccost
+    l, r = rng.choice(len(routes[x]), size=2, replace=True)
+    if l > r:
+        l, r = r, l
+    while r-l+1 == len(routes[x]):
+        l, r = rng.choice(len(routes[x]), size=2, replace=True)
+        if l > r:
+            l, r = r, l
+    new_route, new_cost = best_modify(routes[x][:l] + routes[x][r+1:], routes[x][l:r+1], instance, cost)
+    return routes[:x] + [new_route] + routes[x+1:], ccost + new_cost - calc_route_cost(routes[x], instance, cost)
 
 def main():
     instance_file, termination, seed = parse_args()
@@ -153,14 +206,18 @@ def main():
     start = time.time()
     best_routes = path_scanning(instance, cost, rng)
     best_cost = calc_total_cost(best_routes, instance, cost)
-    # 时间控制（如需迭代改进，可在此循环）
+    max_iter = instance['V'] >> 2
     while time.time() - start < termination - 1:
-        # 可加入局部搜索或多次path scanning取最优
-        routes = path_scanning(instance, cost, rng)
-        total_cost = calc_total_cost(routes, instance, cost)
-        if total_cost < best_cost:
-            best_cost = total_cost
-            best_routes = routes
+        curr_routes = path_scanning(instance, cost, rng)
+        curr_cost = calc_total_cost(curr_routes, instance, cost)
+        for i in range(max_iter):
+            curr_routes, curr_cost = modify(curr_routes, curr_cost, instance, cost, rng)
+            # print(curr_cost)
+            if curr_cost < best_cost:
+                best_cost = curr_cost
+                best_routes = curr_routes
+            if time.time() - start > termination - 1:
+                break
     print(format_solution(best_routes))
     print(f'q {best_cost}')
 
