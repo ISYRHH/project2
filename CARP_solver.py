@@ -49,6 +49,10 @@ def parse_instance(filename):
     non_required_edges = [e for e in edges if e['demand'] == 0]
     vehicles = int(info['VEHICLES'])
     capacity = int(info['CAPACITY'])
+    edge_cost = {} 
+    for e in edges:
+        edge_cost[(e['u'], e['v'])] = e['cost']
+        edge_cost[(e['v'], e['u'])] = e['cost']
     edge_demand = {}
     for e in edges:
         edge_demand[(e['u'], e['v'])] = e['demand']
@@ -61,7 +65,8 @@ def parse_instance(filename):
         'non_required_edges': non_required_edges,
         'vehicles': vehicles,
         'capacity': capacity,
-        'edge_demand': edge_demand
+        'edge_demand': edge_demand,
+        'edge_cost': edge_cost
     }
 
 def build_graph(instance):
@@ -79,25 +84,28 @@ def build_graph(instance):
             for j in range(1, V+1):
                 if cost[i][j] > cost[i][k] + cost[k][j]:
                     cost[i][j] = cost[i][k] + cost[k][j]
-    return cost
+    return cost.tolist()
 
 def path_scanning(instance, cost, rng):
-    required = set((min(e['u'], e['v']), max(e['u'], e['v'])) for e in instance['required_edges'])
-    unserved = required.copy()
+    depot    = instance['depot']
+    cap      = instance['capacity']
+    reqs     = instance['required_edges']
+    unserved = {(min(e['u'],e['v']),max(e['u'],e['v'])) for e in reqs}
+    cm       = cost
+    rand     = rng.random
     routes = []
-    depot = instance['depot']
-    capacity = instance['capacity']
     while unserved:
         route = []
         load = 0
         curr = depot
         while True:
             candidates = []
-            for e in instance['required_edges']:
-                eid = (min(e['u'], e['v']), max(e['u'], e['v']))
-                if eid in unserved and load + e['demand'] <= capacity:
-                    dist = min(cost[curr][e['u']], cost[curr][e['v']])
-                    candidates.append((dist, eid, e))
+            row = cm[curr]
+            for e in reqs:
+                eid = (e['u'],e['v']) if e['u']<e['v'] else (e['v'],e['u'])
+                if eid in unserved and load+e['demand']<=cap:
+                    d = row[e['u']] if row[e['u']]<row[e['v']] else row[e['v']]
+                    candidates.append((d, eid, e))
             if not candidates:
                 break
             rng.shuffle(candidates)
@@ -115,10 +123,7 @@ def path_scanning(instance, cost, rng):
     return routes
 
 def calc_total_cost(routes, instance, cost):
-    edge_cost = {}
-    for e in instance['edges']:
-        edge_cost[(e['u'], e['v'])] = e['cost']
-        edge_cost[(e['v'], e['u'])] = e['cost']
+    edge_cost = instance['edge_cost']
     depot = instance['depot']
     total = 0
     for route in routes:
@@ -202,8 +207,6 @@ def modify(routes, ccost, instance, cost, rng):
             l, r = r, l
     if x == y:
         routex, new_cost = best_modify(routes[x][:l] + routes[x][r+1:], routes[x][l:r+1], instance, cost)
-        # if new_cost < calc_route_cost(routes[x], instance, cost):
-        #     print(new_cost - calc_route_cost(routes[x], instance, cost))
         return routes[:x] + [routex] + routes[x+1:], ccost + new_cost - calc_route_cost(routes[x], instance, cost)
     else:
         demand = instance['edge_demand']
@@ -247,12 +250,11 @@ def main():
     best_routes = path_scanning(instance, cost, rng)
     best_cost = calc_total_cost(best_routes, instance, cost)
 
-    max_iter = instance['V'] * instance['V'] << 2
+    max_iter = 40000
 
     while time.time() - start < termination - 1:
         curr_routes = path_scanning(instance, cost, rng)
         curr_cost = calc_total_cost(curr_routes, instance, cost)
-        # print('?')
         for i in range(max_iter):
             curr_routes, curr_cost = modify(curr_routes, curr_cost, instance, cost, rng)
             if curr_cost < best_cost:
