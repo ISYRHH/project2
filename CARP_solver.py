@@ -49,6 +49,10 @@ def parse_instance(filename):
     non_required_edges = [e for e in edges if e['demand'] == 0]
     vehicles = int(info['VEHICLES'])
     capacity = int(info['CAPACITY'])
+    edge_demand = {}
+    for e in edges:
+        edge_demand[(e['u'], e['v'])] = e['demand']
+        edge_demand[(e['v'], e['u'])] = e['demand']
     return {
         'V': V,
         'depot': depot,
@@ -56,7 +60,8 @@ def parse_instance(filename):
         'required_edges': required_edges,
         'non_required_edges': non_required_edges,
         'vehicles': vehicles,
-        'capacity': capacity
+        'capacity': capacity,
+        'edge_demand': edge_demand
     }
 
 def build_graph(instance):
@@ -126,16 +131,11 @@ def calc_total_cost(routes, instance, cost):
     return total
 
 def calc_route_cost(route, instance, cost):
-    edge_cost = {}
-    for e in instance['edges']:
-        edge_cost[(e['u'], e['v'])] = e['cost']
-        edge_cost[(e['v'], e['u'])] = e['cost']
     depot = instance['depot']
     total = 0
     curr = depot
     for u, v in route:
         total += cost[curr][u]
-        total += edge_cost[(u, v)]
         curr = v
     total += cost[curr][depot]
     return total
@@ -149,43 +149,69 @@ def format_solution(routes):
         s.append('0')
     return 's ' + ','.join(s)
 
-def best_modify(new_route, ord_route, instance, cost):
+def best_modify(routex, routey, instance, cost):
+    if(routex == [] or routey == []):
+        return routex + routey, calc_route_cost(routex + routey, instance, cost)
     depot = instance['depot']
-    rev_route = [(v, u) for u, v in ord_route[::-1]]
-    s, t = ord_route[0][0], ord_route[-1][1]
-    min_cost = cost[depot][s] + cost[t][new_route[0][0]] - cost[depot][new_route[0][0]]
-    min_pos = 0
-    min_rev = False
-    if cost[depot][t] + cost[s][new_route[0][0]] - cost[depot][new_route[0][0]] < min_cost:
-        min_cost = cost[depot][t] + cost[s][new_route[0][0]] - cost[depot][new_route[0][0]]
-        min_pos = 0
-        min_rev = True
-    if cost[depot][s] + cost[t][new_route[-1][1]] - cost[depot][new_route[-1][1]] < min_cost:
-        min_cost = cost[depot][s] + cost[t][new_route[-1][1]] - cost[depot][new_route[-1][1]]
-        min_pos = len(new_route)
-        min_rev = True
-    if cost[depot][t] + cost[s][new_route[-1][1]] - cost[depot][new_route[-1][1]] < min_cost:
-        min_cost = cost[depot][t] + cost[s][new_route[-1][1]] - cost[depot][new_route[-1][1]]
-        min_pos = len(new_route)
-        min_rev = False
-    for i in range(1, len(new_route)):
-        if cost[new_route[i-1][1]][s] + cost[new_route[i][0]][t] - cost[new_route[i-1][1]][new_route[i][0]] < min_cost:
-            min_cost = cost[new_route[i-1][1]][s] + cost[new_route[i][0]][t] - cost[new_route[i-1][1]][new_route[i][0]]
-            min_pos = i
-            min_rev = False
-        if cost[new_route[i][0]][s] + cost[new_route[i-1][1]][t] - cost[new_route[i][0]][new_route[i-1][1]] < min_cost:
-            min_cost = cost[new_route[i][0]][s] + cost[new_route[i-1][1]][t] - cost[new_route[i][0]][new_route[i-1][1]]
-            min_pos = i
-            min_rev = True
-    if min_rev:
-        new_route = new_route[:min_pos] + rev_route + new_route[min_pos:]
+    dp = np.full((len(routex)+1, len(routey)+1, 2), 0x3f3f3f3f, dtype=int)
+    pre = np.zeros((len(routex)+1, len(routey)+1, 2), dtype=int)
+    for i in range(len(routex)+1):
+        for j in range(len(routey)+1):
+            if i == 0 and j == 0:
+                dp[0][1][1] = cost[depot][routey[0][0]]
+                dp[1][0][0] = cost[depot][routex[0][0]]
+            else:
+                for k in range(2):
+                    if dp[i][j][k] == 0x3f3f3f3f:
+                        continue
+                    if i < len(routex):
+                        if k == 0:
+                            if dp[i+1][j][0] > dp[i][j][k] + cost[routex[i][0]][routex[i-1][1]]:
+                                dp[i+1][j][0] = dp[i][j][k] + cost[routex[i][0]][routex[i-1][1]]
+                                pre[i+1][j][0] = k
+                        else:
+                            if dp[i+1][j][0] > dp[i][j][k] + cost[routex[i][0]][routey[j-1][1]]:
+                                dp[i+1][j][0] = dp[i][j][k] + cost[routex[i][0]][routey[j-1][1]]
+                                pre[i+1][j][0] = k
+                    if j < len(routey):
+                        if k == 0:
+                            if dp[i][j+1][1] > dp[i][j][k] + cost[routey[j][0]][routex[i-1][1]]:
+                                dp[i][j+1][1] = dp[i][j][k] + cost[routey[j][0]][routex[i-1][1]]
+                                pre[i][j+1][1] = k
+                        else:
+                            if dp[i][j+1][1] > dp[i][j][k] + cost[routey[j][0]][routey[j-1][1]]:
+                                dp[i][j+1][1] = dp[i][j][k] + cost[routey[j][0]][routey[j-1][1]]
+                                pre[i][j+1][1] = k
+    nx, ny = len(routex), len(routey)
+    dr, res = 0, 0
+    if dp[nx][ny][0]+cost[depot][routex[nx-1][1]] > dp[nx][ny][1]+cost[depot][routey[ny-1][1]]:
+        dr = 1
+        res = dp[nx][ny][1] + cost[depot][routey[ny-1][1]]
     else:
-        new_route = new_route[:min_pos] + ord_route + new_route[min_pos:]
-
-    return new_route, calc_route_cost(new_route, instance, cost)
+        dr = 0
+        res = dp[nx][ny][0] + cost[depot][routex[nx-1][1]]
+    new_route = []
+    # for i in range(len(routex)):
+    #     print([x[0] for x in pre[i]])
+    # for i in range(len(routex)):
+    #     print([x[1] for x in pre[i]])
+    while nx > 0 or ny > 0:
+        if dr == 0:
+            new_route.append(routex[nx-1])
+            dr = pre[nx][ny][0]
+            nx -= 1
+        else:
+            new_route.append(routey[ny-1])
+            dr = pre[nx][ny][1]
+            ny -= 1
+    new_route.reverse()
+    return new_route, res
 
 def modify(routes, ccost, instance, cost, rng):
     x = rng.integers(len(routes))
+    y = rng.integers(len(routes))
+    if x > y:
+        x, y = y, x
     if len (routes[x]) < 2:
         return routes, ccost
     l, r = rng.choice(len(routes[x]), size=2, replace=True)
@@ -195,8 +221,45 @@ def modify(routes, ccost, instance, cost, rng):
         l, r = rng.choice(len(routes[x]), size=2, replace=True)
         if l > r:
             l, r = r, l
-    new_route, new_cost = best_modify(routes[x][:l] + routes[x][r+1:], routes[x][l:r+1], instance, cost)
-    return routes[:x] + [new_route] + routes[x+1:], ccost + new_cost - calc_route_cost(routes[x], instance, cost)
+    if x == x:
+        new_route, new_cost = best_modify(routes[x][:l] + routes[x][r+1:], routes[x][l:r+1], instance, cost)
+        if new_cost < calc_route_cost(routes[x], instance, cost):
+            print(new_cost - calc_route_cost(routes[x], instance, cost))
+        return routes[:x] + [new_route] + routes[x+1:], ccost + new_cost - calc_route_cost(routes[x], instance, cost)
+    else:
+        demand = instance['edge_demand']
+        capacity = instance['capacity']
+        loadx = sum(demand[(min(u, v), max(u, v))] for u, v in routes[x])
+        loady = sum(demand[(min(u, v), max(u, v))] for u, v in routes[y])
+        if loadx + loady <= capacity:
+            new_route, new_cost = best_modify(routes[x], routes[y], instance, cost)
+            origin = calc_route_cost(routes[x], instance, cost) + calc_route_cost(routes[y], instance, cost)
+            if new_cost < origin:
+                return routes[:x] + [new_route] + routes[x+1:y] + routes[y+1:], ccost + new_cost - origin
+            else:
+                return routes, ccost
+        else:
+            ll = rng.integers(len(routes[y]))
+            best_routes, best_cost = routes, ccost
+            wei0 = 0
+            origin = calc_route_cost(routes[x], instance, cost) + calc_route_cost(routes[y], instance, cost)
+            for i in range(l,r+1):
+                wei0 += demand[(min(routes[x][i][0], routes[x][i][1]), max(routes[x][i][0], routes[x][i][1]))]
+            wei = 0
+            for i in range(ll,len(routes[y])):
+                wei += demand[(min(routes[y][i][0], routes[y][i][1]), max(routes[y][i][0], routes[y][i][1]))]
+                if loadx - wei0 + wei > capacity:
+                    break
+                if loady - wei + wei0 > capacity:
+                    continue
+                new_routex, new_costx = best_modify(routes[x][:l] + routes[x][r+1:], routes[y][ll:i+1], instance, cost)
+                new_routey, new_costy = best_modify(routes[y][:ll] + routes[y][i+1:], routes[x][l:r+1], instance, cost)
+                if ccost + new_costx + new_costy - origin < best_cost:
+                    best_cost = ccost + new_costx + new_costy - origin
+                    best_routes = routes[:x] + [new_routex] + routes[x+1:y] + [new_routey] + routes[y+1:]
+                    if best_cost != calc_total_cost(best_routes, instance, cost):
+                        exit(0)
+            return best_routes, best_cost
 
 def main():
     instance_file, termination, seed = parse_args()
@@ -206,14 +269,19 @@ def main():
     start = time.time()
     best_routes = path_scanning(instance, cost, rng)
     best_cost = calc_total_cost(best_routes, instance, cost)
-    max_iter = instance['V'] >> 2
+
+    max_iter = 300
+
     while time.time() - start < termination - 1:
+        # print(1)
         curr_routes = path_scanning(instance, cost, rng)
         curr_cost = calc_total_cost(curr_routes, instance, cost)
+        print('?')
         for i in range(max_iter):
             curr_routes, curr_cost = modify(curr_routes, curr_cost, instance, cost, rng)
             # print(curr_cost)
             if curr_cost < best_cost:
+                # print(1)
                 best_cost = curr_cost
                 best_routes = curr_routes
             if time.time() - start > termination - 1:
