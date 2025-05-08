@@ -1,6 +1,7 @@
 import sys
 import time
 import numpy as np
+import concurrent.futures
 
 def parse_args():
     instance_file = None
@@ -198,13 +199,24 @@ def modify(routes, ccost, instance, cost, rng):
         x, y = y, x
     if len (routes[x]) < 2:
         return routes, ccost
-    l, r = rng.choice(len(routes[x]), size=2, replace=True)
-    if l > r:
-        l, r = r, l
+    
+    # l, r = rng.choice(len(routes[x]), size=2, replace=True)
+
+    n = len(routes[x])
+    l = rng.integers(n)
+    sd = max(1, n * 0.3)
+    diff = abs(int(rng.normal(0, sd)))
+    r = min(n-1, l + diff)
+
     while r-l+1 == len(routes[x]):
-        l, r = rng.choice(len(routes[x]), size=2, replace=True)
-        if l > r:
-            l, r = r, l
+        
+        # l, r = rng.choice(len(routes[x]), size=2, replace=True)
+
+        l = rng.integers(n)
+        sd = max(1, n * 0.3)
+        diff = abs(int(rng.normal(0, sd)))
+        r = min(n-1, l + diff)
+
     if x == y:
         routex, new_cost = best_modify(routes[x][:l] + routes[x][r+1:], routes[x][l:r+1], instance, cost)
         return routes[:x] + [routex] + routes[x+1:], ccost + new_cost - calc_route_cost(routes[x], instance, cost)
@@ -252,16 +264,29 @@ def main():
 
     max_iter = 40000
 
-    while time.time() - start < termination - 1:
-        curr_routes = path_scanning(instance, cost, rng)
-        curr_cost = calc_total_cost(curr_routes, instance, cost)
-        for i in range(max_iter):
-            curr_routes, curr_cost = modify(curr_routes, curr_cost, instance, cost, rng)
-            if curr_cost < best_cost:
-                best_cost = curr_cost
-                best_routes = curr_routes
-            if time.time() - start > termination - 1:
-                break
+    def worker(offset):
+        sub_rng = np.random.default_rng(seed + offset)
+        r = path_scanning(instance, cost, sub_rng)
+        c = calc_total_cost(r, instance, cost)
+        best_r, best_c = r, c
+        while time.time() - start < termination - 1:
+            r = path_scanning(instance, cost, sub_rng)
+            c = calc_total_cost(r, instance, cost)
+            for _ in range(max_iter):
+                r, c = modify(r, c, instance, cost, sub_rng)
+                if c < best_c:
+                    best_r, best_c = r, c
+                if time.time() - start >= termination - 1:
+                    break
+        return best_r, best_c
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(worker, t) for t in range(8)]
+        for fut in concurrent.futures.as_completed(futures):
+            r, c = fut.result()
+            if c < best_cost:
+                best_cost, best_routes = c, r
+
     print(format_solution(best_routes))
     print(f'q {best_cost}')
 
