@@ -262,7 +262,7 @@ def main():
     best_routes = path_scanning(instance, cost, rng)
     best_cost = calc_total_cost(best_routes, instance, cost)
 
-    max_iter = 40000
+    max_iter = 100000
 
     def worker(offset):
         sub_rng = np.random.default_rng(seed + offset)
