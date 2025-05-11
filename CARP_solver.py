@@ -199,24 +199,16 @@ def modify(routes, ccost, instance, cost, rng):
         x, y = y, x
     if len (routes[x]) < 2:
         return routes, ccost
-    
-    # l, r = rng.choice(len(routes[x]), size=2, replace=True)
-
     n = len(routes[x])
     l = rng.integers(n)
     sd = max(1, n * 0.3)
     diff = abs(int(rng.normal(0, sd)))
     r = min(n-1, l + diff)
-
     while r-l+1 == len(routes[x]):
-        
-        # l, r = rng.choice(len(routes[x]), size=2, replace=True)
-
         l = rng.integers(n)
         sd = max(1, n * 0.3)
         diff = abs(int(rng.normal(0, sd)))
         r = min(n-1, l + diff)
-
     if x == y:
         routex, new_cost = best_modify(routes[x][:l] + routes[x][r+1:], routes[x][l:r+1], instance, cost)
         return routes[:x] + [routex] + routes[x+1:], ccost + new_cost - calc_route_cost(routes[x], instance, cost)
